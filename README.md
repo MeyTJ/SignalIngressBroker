@@ -16,7 +16,7 @@ internal/
   usecase/                  ports, Ingest, Broadcast orchestration
   adapter/
     ingress/websocket/      WebSocket ingress adapter
-    ingress/grpc/           gRPC ingress adapter
+    ingress/grpc/           gRPC client-stream ingress (IngestSignals)
     egress/                 subscriber write adapter
   infrastructure/
     config/                 configuration defaults
@@ -38,6 +38,7 @@ Current scaffold exposes stubs only; hot-path pooling, sharded registry, and dro
 ## Build
 
 ```bash
+make proto   # regenerate api/gen from api/proto
 make build
 make test
 make lint

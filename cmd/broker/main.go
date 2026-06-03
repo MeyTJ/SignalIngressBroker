@@ -38,7 +38,7 @@ func main() {
 	broadcastUC := usecase.NewBroadcast(subscriberRegistry, broadcaster)
 
 	wsHandler := websocket.NewHandler(cfg, ingestUC, logger)
-	grpcServer := grpc.NewServer(ingestUC)
+	grpcServer := grpc.NewServer(cfg, ingestUC, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -48,7 +48,7 @@ func main() {
 		"grpc", cfg.GRPCListenAddr,
 	)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- wsHandler.Serve(ctx) }()
 	go func() { errCh <- grpcServer.Serve(ctx) }()
 	go func() { errCh <- broadcastUC.Run(ctx, events) }()
