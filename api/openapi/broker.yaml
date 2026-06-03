@@ -1,0 +1,18 @@
+openapi: 3.0.3
+info:
+  title: SignalIngressBroker
+  version: 0.1.0
+  description: Placeholder HTTP contract for health and operational endpoints.
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        "200":
+          description: OK
+  /readyz:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Ready

@@ -1,0 +1,76 @@
+---
+description: SignalIngressBroker — Go gateway architecture, hot-path, and production standards
+alwaysApply: true
+---
+
+# SignalIngressBroker
+
+High-throughput, zero-allocation streaming gateway (Go 1.22+). Module: `SignalIngressBroker`. Multi-repo ecosystem: no hard coupling to sibling services; expose stable contracts (proto/OpenAPI) at boundaries.
+
+## Architecture (Clean Architecture)
+
+Layer inward; dependencies point **inward only**:
+
+| Layer | Path pattern | Responsibility |
+|-------|--------------|----------------|
+| Domain | `internal/domain/` | Entities, value objects, domain errors — no stdlib I/O |
+| Use case | `internal/usecase/` | Orchestration, ports (interfaces) |
+| Adapter (in) | `internal/adapter/ingress/` | WebSocket, gRPC ingest handlers |
+| Adapter (out) | `internal/adapter/egress/` | Broadcast, connection writes |
+| Infrastructure | `internal/infrastructure/` | Pools, registry, worker pools, config |
+| Composition | `cmd/broker/` | `main`, wiring, graceful shutdown |
+
+**Naming:** domain-driven packages; **never** dash-separated suffixes (`websocket-ingest` → `websocketingress` or `ingress/websocket`). Public API surface stays minimal (`cmd/`, `api/` for protos).
+
+## Hot path (non-negotiable)
+
+1. **Ingress read:** `sync.Pool` for `[]byte` / read buffers; reuse after `Reset`; return to pool only when ownership is clear.
+2. **Unmarshal:** prefer `json.Unmarshal` into pooled structs or codegen (`easyjson`/`vtproto`) only if benchmarks justify it; avoid `interface{}` on hot path.
+3. **Channels:** bounded ingress channel; producers must not block unbounded — use `select` + drop/metrics or backpressure signal upstream.
+4. **GC:** no per-message `make` in ingest loop; no string concatenation for payloads; pre-size slices where length is known.
+
+## Connection registry
+
+- In-process only: **no Redis** for session/subscriber state.
+- Sharded map: `shardCount` power-of-two, `hash(subscriberID) & mask`, per-shard `sync.RWMutex` + `map[string]*Subscriber`.
+- Register/unregister: write lock on shard; fan-out: read lock + snapshot subscriber IDs or shallow copy pointers under read lock with short critical sections.
+
+## Broadcasting & backpressure
+
+- Normalized events on a single buffered `chan domain.Event` (or partitioned by topic if needed later).
+- Worker pool (fixed `N` workers, e.g. `runtime.NumCPU()*2`) reads channel and fans out.
+- Per-subscriber **bounded** send buffer (e.g. `chan []byte` cap 64). On `select { case ch <- payload: default: }` **drop connection** (close, unregister, metric), never block ingress or broadcast workers.
+- One slow client must not stall the fleet.
+
+## Concurrency & lifecycle
+
+- Context-driven shutdown: cancel → close listeners → drain with timeout → close registry.
+- `errgroup` or explicit WaitGroup for workers; panic in goroutine → recover + log + increment `broker_panics_total`.
+- Idempotent `Close()` on connections and subscribers.
+
+## Observability (required for production)
+
+- OpenTelemetry traces: ingest → normalize → broadcast span attributes (`subscriber_id`, `event_type`, `dropped`).
+- Prometheus metrics: `ingress_messages_total`, `broadcast_latency_seconds`, `subscriber_buffer_full_total`, `active_subscribers`, `pool_get_put_total`.
+- Structured logging (`slog`): JSON in prod; debug only behind build tag or level flag.
+
+## Security & ops
+
+- TLS for WS/gRPC in prod; validate Origin for WebSocket; rate-limit per IP at edge (middleware).
+- Config: env + optional file (`caarlos0/env` or `koanf`); secrets from env/K8s secrets, never committed.
+- Health: `/healthz` (alive), `/readyz` (registry + channel depth thresholds).
+- Container: distroless or scratch + static binary; `GOEXPERIMENT` not required; `CGO_ENABLED=0`.
+
+## Testing & quality
+
+- Table-driven unit tests for domain and usecase; race detector (`-race`) on registry and broadcast tests.
+- Benchmarks: `BenchmarkIngressRead`, `BenchmarkBroadcastFanout` in `*_test.go` with `ReportAllocs`.
+- Lint: `golangci-lint` with `govet`, `staticcheck`, `errcheck`, `goleak` on integration tests.
+
+## Code review checklist
+
+- [ ] No allocation in ingest/broadcast hot path (benchmark proof for critical changes)
+- [ ] Bounded channels + drop-on-full documented
+- [ ] Registry sharded; no global mutex for all subscribers
+- [ ] Graceful shutdown with timeout
+- [ ] Metrics and trace propagation on new code paths

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package signalingress.v1;
+
+option go_package = "SignalIngressBroker/api/gen/signalingress/v1;signalingressv1";
+
+// SignalIngressBroker exposes ingress (client stream) and egress (server stream) APIs.
+service SignalIngressBroker {
+  // IngestSignals accepts upstream signal envelopes on a client stream.
+  rpc IngestSignals(stream SignalEnvelope) returns (IngestSignalsResponse);
+  // StreamSignals delivers normalized signals to a downstream subscriber (placeholder).
+  rpc StreamSignals(StreamSignalsRequest) returns (stream SignalEnvelope);
+}
+
+message StreamSignalsRequest {
+  string subscriber_id = 1;
+}
+
+message SignalEnvelope {
+  string id = 1;
+  string type = 2;
+  bytes payload = 3;
+  int64 received_at_unix_nano = 4;
+}
+
+message IngestSignalsResponse {
+  uint64 accepted = 1;
+  uint64 dropped = 2;
+  uint64 invalid = 3;
+}
